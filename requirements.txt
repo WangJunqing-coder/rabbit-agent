@@ -1,0 +1,10 @@
+# Core
+openai>=1.0.0
+httpx>=0.25.0
+rich>=13.0.0
+pyyaml>=6.0
+prompt-toolkit>=3.0.0
+
+# Web
+beautifulsoup4>=4.12.0
+lxml>=4.9.0

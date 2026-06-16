@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "skills": {
+    "super-dev-skills": {
+      "name": "全栈之神自进化套件",
+      "zip_url": "https://api.skillhub.cn/api/v1/download?slug=super-dev-skills",
+      "source": "community",
+      "version": "1.0.2",
+      "installedAt": "2026-06-12T09:30:49Z"
+    },
+    "self-improving-agent": {
+      "name": "self-improving agent",
+      "zip_url": "https://api.skillhub.cn/api/v1/download?slug=self-improving-agent",
+      "source": "community",
+      "version": "3.0.23",
+      "installedAt": "2026-06-12T11:46:35Z"
+    },
+    "ppt-generator-skill": {
+      "name": "ppt-generator-skill",
+      "zip_url": "https://api.skillhub.cn/api/v1/download?slug=ppt-generator-skill",
+      "source": "community",
+      "version": "1.0.2",
+      "installedAt": "2026-06-12T11:50:32Z"
+    }
+  }
+}

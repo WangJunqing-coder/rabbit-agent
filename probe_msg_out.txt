@@ -1,0 +1,26 @@
+=== Input.Submitted source ===
+    @dataclass
+    class Submitted(Message):
+        """Posted when the enter key is pressed within an `Input`.
+
+        Can be handled using `on_input_submitted` in a subclass of `Input` or in a
+        parent widget in the DOM.
+        """
+
+        input: Input
+        """The `Input` widget that is being submitted."""
+        value: str
+        """The value of the `Input` being submitted."""
+        validation_result: ValidationResult | None = None
+        """The result of validating the value on submission, formed by combining the results for each validator.
+        This value will be None if no validation was performed, which will be the case if no validators are supplied
+        to the corresponding `Input` widget."""
+
+        @property
+        def control(self) -> Input:
+            """Alias for self.input."""
+            return self.input
+
+
+TextArea bases: (<class 'textual.widgets._text_area.TextArea'>, <class 'textual.scroll_view.ScrollView'>, <class 'textual.containers.ScrollableContainer'>, <class 'textual.widget.Widget'>)
+TextArea inner classes: ['ALLOW_MAXIMIZE', 'ALLOW_SELECT', 'BINDINGS', 'BINDING_GROUP_TITLE', 'BLANK', 'BORDER_SUBTITLE', 'BORDER_TITLE', 'COMPONENT_CLASSES', 'Changed', 'DEFAULT_CLASSES', 'DEFAULT_CSS', 'FOCUS_ON_CLICK', 'HELP', 'SCOPED_CSS', 'SelectionChanged']
