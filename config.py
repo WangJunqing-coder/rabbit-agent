@@ -2,11 +2,14 @@
 Rabbit Agent 配置管理
 """
 import os
+import logging
 from dataclasses import dataclass, field
 from typing import Optional
 from pathlib import Path
 
 import yaml
+
+logger = logging.getLogger("rabbit_agent.config")
 
 
 @dataclass
@@ -103,7 +106,7 @@ class Config:
                         setattr(self.ui, key, value)
                         
         except Exception as e:
-            print(f"Warning: Failed to load config file: {e}")
+            logger.warning(f"Failed to load config file: {e}")
     
     def _load_from_env(self):
         """从环境变量加载配置"""

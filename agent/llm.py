@@ -1,11 +1,14 @@
 """
 LLM 接口层 - 支持多种后端和流式输出
 """
+import logging
 import json
 from typing import Any, Optional, AsyncIterator
 from dataclasses import dataclass
 
 import httpx
+
+logger = logging.getLogger("rabbit_agent.llm")
 
 from config import LLMConfig
 
@@ -70,6 +73,53 @@ class LLMProvider:
     
     async def close(self):
         await self.client.aclose()
+
+
+def _repair_tool_arguments(args_raw) -> dict:
+    """
+    修复 LLM 返回的不完整/截断的工具调用参数 JSON。
+
+    处理场景：
+    1. JSON 字符串被截断（末尾缺少 }）
+    2. 无法解析的 JSON（用正则提取已知字段）
+    """
+    if not isinstance(args_raw, str):
+        return args_raw if isinstance(args_raw, dict) else {}
+
+    args_str = args_raw.strip()
+
+    # 尝试直接解析
+    try:
+        return json.loads(args_str)
+    except json.JSONDecodeError:
+        pass
+
+    # 尝试修复截断：补全末尾
+    if not args_str.endswith("}"):
+        fixed = args_str + '"}'
+        try:
+            return json.loads(fixed)
+        except json.JSONDecodeError:
+            pass
+
+    # 正则提取已知字段（兜底方案）
+    import re
+    arguments = {}
+    path_match = re.search(r'"path"\s*:\s*"([^"]*)"', args_str)
+    content_match = re.search(r'"content"\s*:\s*"(.*)', args_str, re.DOTALL)
+
+    if path_match:
+        arguments["path"] = path_match.group(1)
+    if content_match:
+        content = content_match.group(1)
+        if not content.endswith('"'):
+            content += '"'
+        try:
+            arguments["content"] = json.loads('"' + content + '"')
+        except (json.JSONDecodeError, ValueError):
+            arguments["content"] = content.rstrip('"')
+
+    return arguments
 
 
 class OpenAICompatibleProvider(LLMProvider):
@@ -137,41 +187,9 @@ class OpenAICompatibleProvider(LLMProvider):
         if "tool_calls" in message and message["tool_calls"]:
             for tc in message["tool_calls"]:
                 try:
-                    args = tc["function"]["arguments"]
-                    # 尝试解析 JSON，如果失败则尝试修复
-                    if isinstance(args, str):
-                        # 移除可能的尾部截断
-                        args = args.strip()
-                        if not args.endswith('}'):
-                            # 尝试修复不完整的 JSON
-                            args = args + '"}'
-                        arguments = json.loads(args)
-                    else:
-                        arguments = args
-                except json.JSONDecodeError:
-                    # 如果解析失败，尝试更 aggressive 的修复
-                    try:
-                        # 提取已知的键值对
-                        import re
-                        args_str = tc["function"]["arguments"]
-                        # 简单提取 path 和 content
-                        path_match = re.search(r'"path"\s*:\s*"([^"]*)"', args_str)
-                        content_match = re.search(r'"content"\s*:\s*"(.*)', args_str, re.DOTALL)
-                        
-                        arguments = {}
-                        if path_match:
-                            arguments["path"] = path_match.group(1)
-                        if content_match:
-                            # 处理可能被截断的 content
-                            content = content_match.group(1)
-                            if not content.endswith('"'):
-                                content = content + '"'
-                            try:
-                                arguments["content"] = json.loads('"' + content + '"')
-                            except:
-                                arguments["content"] = content.rstrip('"')
-                    except Exception:
-                        arguments = {}
+                    arguments = _repair_tool_arguments(tc["function"]["arguments"])
+                except Exception:
+                    arguments = {}
                 
                 tool_calls.append(ToolCall(
                     id=tc.get("id", f"call_{len(tool_calls)}"),
@@ -255,29 +273,9 @@ class OpenAICompatibleProvider(LLMProvider):
                     for idx, buf in tool_call_buffers.items():
                         if buf["name"] and buf["arguments"]:
                             try:
-                                args = buf["arguments"].strip()
-                                if not args.endswith("}"):
-                                    args = args + '"}'
-                                arguments = json.loads(args)
-                            except json.JSONDecodeError:
-                                try:
-                                    import re
-                                    args_str = buf["arguments"]
-                                    path_match = re.search(r'"path"\s*:\s*"([^"]*)"', args_str)
-                                    content_match = re.search(r'"content"\s*:\s*"(.*)', args_str, re.DOTALL)
-                                    arguments = {}
-                                    if path_match:
-                                        arguments["path"] = path_match.group(1)
-                                    if content_match:
-                                        c = content_match.group(1)
-                                        if not c.endswith('"'):
-                                            c = c + '"'
-                                        try:
-                                            arguments["content"] = json.loads('"' + c + '"')
-                                        except:
-                                            arguments["content"] = c.rstrip('"')
-                                except Exception:
-                                    arguments = {}
+                                arguments = _repair_tool_arguments(buf["arguments"])
+                            except Exception:
+                                arguments = {}
                             
                             tool_calls.append(ToolCall(
                                 id=buf["id"] or f"call_{idx}",
@@ -329,7 +327,7 @@ class AnthropicProvider(LLMProvider):
             payload["tools"] = [self._convert_tool(t) for t in tools]
         
         response = await self.client.post(
-            "https://api.anthropic.com/v1/messages",
+            "/messages",
             json=payload,
             headers=headers
         )
@@ -393,7 +391,7 @@ class AnthropicProvider(LLMProvider):
         
         async with self.client.stream(
             "POST",
-            "https://api.anthropic.com/v1/messages",
+            "/messages",
             json=payload,
             headers=headers
         ) as response:

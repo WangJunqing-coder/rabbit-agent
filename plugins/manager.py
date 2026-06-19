@@ -3,12 +3,15 @@
 """
 import os
 import json
+import logging
 import importlib.util
 from pathlib import Path
 from typing import Optional, Callable
 from dataclasses import dataclass, field
 
 from tools.registry import registry
+
+logger = logging.getLogger("rabbit_agent.plugins")
 
 
 @dataclass
@@ -80,7 +83,7 @@ class PluginManager:
                 
                 return True
             except Exception as e:
-                print(f"Failed to load plugin {plugin_name}: {e}")
+                logger.error(f"Failed to load plugin {plugin_name}: {e}")
                 return False
         
         return False

@@ -10,8 +10,8 @@ from tools.registry import tool
 
 
 @tool(
-    name="batch_edit",
-    description="批量编辑多个文件。一次操作修改多个文件，支持查找替换、正则替换等。",
+    name="multi_edit",
+    description="多文件精确编辑。一次操作修改多个文件，支持查找替换。",
     parameters={
         "type": "object",
         "properties": {
@@ -37,8 +37,8 @@ from tools.registry import tool
         "required": ["edits"]
     }
 )
-async def batch_edit(edits: list, dry_run: bool = False) -> dict:
-    """批量编辑"""
+async def multi_edit(edits: list, dry_run: bool = False) -> dict:
+    """多文件精确编辑"""
     results = []
     errors = []
     

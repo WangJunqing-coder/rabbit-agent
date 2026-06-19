@@ -48,13 +48,15 @@ async def web_fetch(url: str, extract_text: bool = True) -> dict:
                 content = re.sub(r'<[^>]+>', ' ', content)
                 # 清理空白
                 content = re.sub(r'\s+', ' ', content).strip()
-                content = content[:5000]
+                # 截断过长内容（只保留前 5000 字符）
+                if len(content) > 5000:
+                    content = content[:5000] + "..."
             
             return {
                 "success": True,
                 "url": url,
                 "status_code": response.status_code,
-                "content": content[:5000]
+                "content": content
             }
             
     except Exception as e:

@@ -21,6 +21,7 @@ from context import get_project_context
 from memory import MemoryManager
 from plugins import get_plugin_manager
 from tools.registry import ToolDefinition, registry
+from logger import logger
 
 # 基础系统提示词
 BASE_SYSTEM_PROMPT = """你是一个强大的 AI 编码助手（Rabbit Agent），类似于 Claude Code 和 Cursor。
@@ -162,21 +163,82 @@ class AgentContext:
 
         return result
 
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        """粗略估算 token 数（中文 ~1.5 char/token，英文 ~4 char/token）"""
+        if not text:
+            return 0
+        # 简单启发式：中文字符数 / 1.5 + 英文字符数 / 4
+        cn_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+        other_chars = len(text) - cn_chars
+        return int(cn_chars / 1.5 + other_chars / 4)
+
+    def _message_tokens(self, msg: "Message") -> int:
+        """估算单条消息的 token 数"""
+        total = self._estimate_tokens(msg.content or "")
+        if msg.tool_calls:
+            for tc in msg.tool_calls:
+                total += self._estimate_tokens(json.dumps(tc.arguments, ensure_ascii=False))
+        return total + 4  # role/format overhead
+
     def trim_messages(self):
-        """裁剪过长的消息历史"""
-        max_messages = self.config.agent.max_context_messages
+        """
+        按 token 预算裁剪消息历史。
 
-        if len(self.messages) <= max_messages:
-            return
+        策略：
+        1. 系统消息永远保留
+        2. 最新的用户消息永远保留
+        3. 从旧到新裁剪，但保证 tool_call + tool_result 成对保留
+        """
+        from config import get_context_window
+        model = self.config.llm.model
+        max_tokens = (
+            self.config.llm.context_window
+            if self.config.llm.context_window > 0
+            else get_context_window(model)
+        )
+        # 留出 20% 给输出
+        token_budget = int(max_tokens * 0.8)
 
-        # 保留系统消息和最近的消息
-        system_messages = [m for m in self.messages if m.role == "system"]
-        other_messages = [m for m in self.messages if m.role != "system"]
+        system_msgs = [m for m in self.messages if m.role == "system"]
+        other_msgs = [m for m in self.messages if m.role != "system"]
 
-        # 保留最后 N 条
-        trimmed = other_messages[-(max_messages - len(system_messages)) :]
+        # 计算系统消息占用
+        system_tokens = sum(self._message_tokens(m) for m in system_msgs)
 
-        self.messages = system_messages + trimmed
+        # 从最新消息向前保留，直到超出预算
+        # 同时保证 tool_call + tool_result 成对
+        kept: list[Message] = []
+        used_tokens = 0
+
+        # 从后往前遍历
+        i = len(other_msgs) - 1
+        while i >= 0:
+            msg = other_msgs[i]
+            msg_tokens = self._message_tokens(msg)
+
+            # 如果是 tool 结果消息，需要和对应的 assistant tool_call 一起保留
+            if msg.role == "tool" and i > 0:
+                # 向前找对应的 assistant 消息
+                prev = other_msgs[i - 1]
+                if prev.role == "assistant" and prev.tool_calls:
+                    pair_tokens = msg_tokens + self._message_tokens(prev)
+                    if system_tokens + used_tokens + pair_tokens <= token_budget:
+                        kept.insert(0, msg)
+                        kept.insert(0, prev)
+                        used_tokens += pair_tokens
+                        i -= 2
+                        continue
+
+            if system_tokens + used_tokens + msg_tokens <= token_budget:
+                kept.insert(0, msg)
+                used_tokens += msg_tokens
+            else:
+                # 超出预算，跳过（但记录跳过了多少条）
+                pass
+            i -= 1
+
+        self.messages = system_msgs + kept
 
 
 class Agent:
@@ -447,17 +509,14 @@ class Agent:
                     break
         except Exception as e:
             # 流式输出出错，尝试回退到非流式模式（带重试）
-            print(f"Stream error, falling back to non-stream: {e}", file=sys.stderr)
+            logger.error(f"Stream error, falling back to non-stream: {e}")
             for fallback_retry in range(2):
                 try:
                     await asyncio.sleep(1 * (fallback_retry + 1))  # 等待 1s, 2s
                     response = await self.llm.chat(messages, schemas)
                     return response
                 except Exception as e2:
-                    print(
-                        f"Fallback attempt {fallback_retry + 1} failed: {e2}",
-                        file=sys.stderr,
-                    )
+                    logger.error(f"Fallback attempt {fallback_retry + 1} failed: {e2}")
                     if fallback_retry == 1 and not full_content and not tool_calls:
                         raise e2
 

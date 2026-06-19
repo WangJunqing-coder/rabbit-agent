@@ -1,13 +1,75 @@
 """
-终端命令执行工具
+终端命令执行工具 - 支持安全过滤
 """
 import asyncio
 import os
-import subprocess
-import sys
+import re
 from typing import Optional
 
 from tools.registry import tool
+from logger import logger
+
+# ── 危险命令检测 ──────────────────────────────────────────────
+# 高危命令模式（匹配任意位置）
+DANGEROUS_PATTERNS = [
+    # 数据毁灭
+    (r'\brm\s+(-[rfR]+\s+)?/', "递归删除根目录/系统文件"),
+    (r'\brm\s+(-[rfR]+\s+)?\*', "递归删除通配符文件"),
+    (r'\bdd\s+.*of=', "dd 磁盘写入（可能覆盖数据）"),
+    (r'\bmkfs\b', "格式化文件系统"),
+    (r':\(\)\{.*:\|:.*\}.*:', "fork 炸弹"),
+    # 权限/安全
+    (r'\bchmod\s+777\b', "设置 777 全开权限"),
+    (r'\bchown\s+.*root', "变更为 root 所有者"),
+    (r'\b(sudo\s+)?rm\s+.*--no-preserve-root', "删除根目录"),
+    # 网络/下载（可能的注入）
+    (r'curl\s.*\|\s*(ba)?sh', "远程脚本直接执行"),
+    (r'wget\s.*\|\s*(ba)?sh', "远程脚本直接执行"),
+    # 系统控制
+    (r'\bshutdown\b', "关机"),
+    (r'\breboot\b', "重启"),
+    (r'\binit\s+[06]', "关机/重启"),
+    (r'\bsystemctl\s+(stop|disable)\s+', "停止系统服务"),
+]
+
+# 中等风险命令（仅记录日志）
+MODERATE_PATTERNS = [
+    (r'\bsudo\b', "使用 sudo 提权"),
+    (r'\bpip\s+install\b', "安装 Python 包"),
+    (r'\bnpm\s+install\b', "安装 Node 包"),
+    (r'\bgit\s+push\b', "推送到远程仓库"),
+    (r'\bgit\s+reset\s+--hard\b', "硬重置 Git"),
+    (r'\bgit\s+clean\s+-[fF]', "Git 清理未跟踪文件"),
+]
+
+
+def check_command_safety(command: str) -> dict:
+    """
+    检查命令安全性。
+
+    Returns:
+        {"safe": bool, "level": "safe"|"warn"|"block", "reason": str}
+    """
+    # 高危命令 — 阻止
+    for pattern, reason in DANGEROUS_PATTERNS:
+        if re.search(pattern, command, re.IGNORECASE):
+            return {
+                "safe": False,
+                "level": "block",
+                "reason": f"⚠️ 检测到危险操作: {reason}"
+            }
+
+    # 中等风险 — 警告但允许
+    for pattern, reason in MODERATE_PATTERNS:
+        if re.search(pattern, command, re.IGNORECASE):
+            logger.warning(f"Suspicious command: {command} ({reason})")
+            return {
+                "safe": True,
+                "level": "warn",
+                "reason": f"⚠️ 注意: {reason}"
+            }
+
+    return {"safe": True, "level": "safe", "reason": ""}
 
 
 @tool(
@@ -35,15 +97,22 @@ from tools.registry import tool
 )
 async def terminal(command: str, timeout: int = 30, workdir: str = None) -> dict:
     """执行终端命令"""
+    # 安全检查
+    safety = check_command_safety(command)
+    if not safety["safe"]:
+        logger.warning(f"Blocked dangerous command: {command}")
+        return {
+            "stdout": "",
+            "stderr": safety["reason"],
+            "exit_code": -1,
+            "blocked": True
+        }
+
     cwd = workdir or os.getcwd()
     
-    # Windows 兼容性
-    if sys.platform == "win32":
-        shell = True
-    else:
-        shell = True
-    
     try:
+        # 使用 shell 模式以支持管道、重定向等 shell 特性
+        # 注意：LLM 可能生成包含特殊字符的命令，shell=True 存在注入风险
         proc = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,

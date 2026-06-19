@@ -4,10 +4,13 @@
 import json
 import os
 import uuid
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass, field, asdict
+
+logger = logging.getLogger("rabbit_agent.sessions")
 
 
 @dataclass
@@ -54,7 +57,7 @@ class SessionManager:
                 )
                 self.sessions[session.id] = session
             except Exception as e:
-                print(f"Warning: Failed to load session {file_path}: {e}")
+                logger.warning(f"Failed to load session {file_path}: {e}")
     
     def _save_session(self, session: Session):
         """保存会话到文件"""

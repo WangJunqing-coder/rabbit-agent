@@ -329,20 +329,56 @@ class PluginManager:
             del self.plugins[name]
     
     def match_skill(self, text: str) -> Optional[Skill]:
-        """根据文本匹配技能"""
+        """
+        根据文本匹配技能（加权评分算法）。
+
+        评分规则：
+        - 英文触发词精确匹配（word boundary）: +10 分
+        - 中文触发词子串匹配: +10 分（中文无空格分词，用子串即等价于精确匹配）
+        - 英文触发词子串匹配（>= 4 字符）: +3 分
+        - 正则模式匹配: +5 分
+
+        只返回得分最高的技能，且得分必须 >= 10（至少一个精确匹配）。
+        """
         text_lower = text.lower()
-        
+        # 英文按空格/标点分词
+        text_words = set(re.findall(r'[a-zA-Z]+', text_lower))
+
+        best_skill = None
+        best_score = 0
+
+        def _is_chinese(s: str) -> bool:
+            return bool(re.search(r'[\u4e00-\u9fff]', s))
+
         for skill in self.skills.values():
-            # 检查触发词
+            score = 0
+
             for trigger in skill.triggers:
-                if trigger.lower() in text_lower:
-                    return skill
-            
+                trigger_lower = trigger.lower()
+
+                if _is_chinese(trigger):
+                    # 中文触发词：子串匹配（中文无空格分词）
+                    if trigger_lower in text_lower:
+                        score += 10 + len(trigger_lower)
+                else:
+                    # 英文触发词：优先精确匹配
+                    if trigger_lower in text_words:
+                        score += 10 + len(trigger_lower)
+                    elif len(trigger_lower) >= 4 and trigger_lower in text_lower:
+                        score += 3
+
             # 检查正则模式
             for pattern in skill.patterns:
                 if re.search(pattern, text, re.IGNORECASE):
-                    return skill
-        
+                    score += 5
+
+            if score > best_score:
+                best_score = score
+                best_skill = skill
+
+        if best_score >= 10:
+            return best_skill
+
         return None
     
     def get_skill_prompt(self, skill_name: str) -> str:
